@@ -1,0 +1,219 @@
+
+# TP Noté Fondements Statistiques - ANDREOLLI Justine M1 SDSC
+
+## Préparation du jeu de données
+
+```{r}
+library(tidyverse)
+metabric.data <- read.csv2('./data/METABRIC_RNA_Mutation.csv',header=TRUE,sep=",",
+                           row.names='patient_id')
+# supprimer les données de mutation que nous n'allons pas utiliser
+genes.data <- metabric.data[,1:519]
+# Conversion des colonnes au bon type
+genes.data <- type_convert(genes.data)
+# Première diminution de dimension par selection des $100$ gènes
+#les plus corrélées au score de gravité de Nottingham
+corre <- c()
+for (i in c(1:489)){
+  corre <- c(corre,cor(genes.data[,21],genes.data[,i+30])**2)
+}
+selected <- order(corre,decreasing = TRUE)[1:100]
+genes.data <- genes.data[,c(1:30,30+selected)]
+
+```
+
+## ACP et k-means
+
+### Question 1
+
+1.  Réaliser une ACP normée sur les données des 100 gènes considérées en
+    gardant les variables médicales comme variables supplémentaires
+    d’interprétation (les variables 1, 19, 20, 21, 23 et 28 sont
+    quantitatives, les autres sont qualitatives. Vous justifierez le
+    nombre de composantes gardées.
+
+```{r}
+library(FactoMineR)
+library(factoextra)
+
+acp_rslt <- PCA(genes.data[, -(1:30)],
+                  scale.unit = TRUE,  # on normalise les données
+                  quanti.sup = c(1, 19, 20, 21, 23, 28),  # variables quantitatives
+                  quali.sup = setdiff(1:30, c(1, 19, 20, 21, 23, 28)))  # variables qualitatives 
+
+fviz_screeplot(acp_rslt, addlabels = TRUE, ylim = c(0, 50))
+```
+
+```{r}
+variance_expliquee <- acp_rslt$eig[, 2]  # variance par composante
+variance_cumulee <- acp_rslt$eig[, 3]   # variance cumulée
+
+nb_composantes <- which(variance_cumulee >= 80)[1]
+cat("\nNombre de composantes guardées (en choisissant au moins 80% comme seuil) :", nb_composantes, "\n")
+```
+
+Il est donc nécessaire de guarder les 34 premières composantes pour
+avoir 80.1% de la variance totale des données. Cela s'explique car
+chaque composante a une variance individuelle relativement faible. Avec
+notamment la première composante qui explique seulement 19,3% de la
+variance puis ensuite les autres composantes ne font que contribuer de
+moins en moins à la variance.
+
+### Question 2
+
+2.  Appliquer l’algorithme des k-means sur les vecteurs projetés, pour
+    un nombre de composantes allant de 1 à 30 et regarder l’évolution de
+    la somme des carrés intra-classes. En utilisant un critère du coude,
+    décider du nombre d’un nombre de classes à retenir. Appliquer
+    l’algorithme pour ce nombre de classes et en déduire une
+    classification des patientes.
+
+```{r}
+library(cluster)
+library(factoextra)
+
+coord_projetees <- acp_rslt$ind$coord
+nb_dimensions <- ncol(coord_projetees)  # nombre de dimensions
+
+wss <- c()  # somme des carrés intra-clusters 
+for (k in 1:30) {
+  kmeans_rslt <- kmeans(coord_projetees[, 1:min(30, nb_dimensions)], centers = k, nstart = 10, iter.max=100)
+  wss <- c(wss, kmeans_rslt$tot.withinss)
+}
+
+plot(1:30, wss, type = "b", pch = 19, frame = FALSE,
+     xlab = "Nb de clusters",
+     ylab = "Within-Cluster Sum of Squares (wss)",
+     main = "Critère du coude")
+
+nombre_optimal_clusters <- 3  # On choisi 3 car c'est là qu'on repère que le wss ralenti
+
+# On applique kmeans avec 3 comme choix de nombre de cluster
+final_kmeans <- kmeans(coord_projetees[, 1:min(30, nb_dimensions)], centers = nombre_optimal_clusters, nstart = 10, iter.max=100)
+
+genes.data$cluster <- as.factor(final_kmeans$cluster)
+```
+
+Donc avec l'algortihme Kmeans avec 3 clusters, on peut finalement
+classer les patientes en 3 groupes.
+
+### Question 3
+
+3.  Tracer le nuage de points dans le plan principal de l’ACP avec des
+    couleurs correspondant aux classes de k-means. Que constatez-vous?
+
+```{r}
+fviz_pca_ind(acp_rslt,
+             geom = "point",
+             col.ind = genes.data$cluster,  
+             palette = c("#2E9FDF", "#996DCF", "#850606"),  
+             addEllipses = TRUE,  
+             ellipse.type = "convex", 
+             legend.title = "Cluster",
+             repel = TRUE) + ggtitle("Nuage de points dans le plan principal de l'ACP avec les clusters de k-means distingués")
+```
+
+On utilise donc les deux premières composantes pour les dimensions. On
+remarque qu'il y a 3 clusters. Le cluster 1 et 2 se confondent
+légèrement dans certaines zones ce qui pourrait signifier que ces deux
+groupes de clusters pourraient avoir bénéfécié d'autres composantes pour
+mieux séparer ceux-ci. La dimension 1 est plus discriminante que la
+dimension 2 avec 19.3% de variance expliquée pour la première contre
+seulement 6.5% pour la deuxième.
+
+## Interprétation des résultats
+
+### Question 4
+
+4.  A l’aide de tests du chi-deux, trouver les variables médicales
+    qualitatives auxquelles les classes trouvées sont les plus liées
+    (ici, on comprendra lié comme éloigné de l’indépendance). Comparer
+    les premières d’entre elles (par exemple les trois premières) avec
+    la classification établie, et utilisant la fonction table qui permet
+    d’établir des tables de contingence. Commenter les résultats en
+    terme d’interprétation de la classification établie.
+
+```{r}
+variables_qualitatives <- setdiff(1:30, c(1, 19, 20, 21, 23, 28))
+
+rslt_chi2 <- data.frame(Variable = character(), p_value = numeric())
+
+# On fait le test du Chi2 pour chaque variable qualitative
+for (var in variables_qualitatives) {
+  table_contingence <- table(genes.data[[var]], genes.data$cluster)
+  
+  test_chi2 <- chisq.test(table_contingence)
+  
+  rslt_chi2 <- rbind(rslt_chi2, 
+                          data.frame(Variable = colnames(genes.data)[var], 
+                                     p_value = test_chi2$p.value))
+}
+
+rslt_chi2 <- rslt_chi2[order(rslt_chi2$p_value), ]
+print(rslt_chi2)
+
+# Comparer les trois premières variables qualitatives
+for (var in rslt_chi2$Variable[1:3]) {
+  cat("\nTable de contingence de la variable :", var, "\n")
+  print(table(genes.data[[var]], genes.data$cluster))
+}
+
+```
+
+Les variables les plus significatives et donc avec la p-value la plus
+faible sont integrative_cluster, pam50\_.\_claudin.low_subtype et
+X3.gene_classifier_subtype.
+
+Pour la table de contigence integrative_cluster, on remarque que la
+modalité 10 est un bon indicateur du cluster 3. Pour le tableau de
+contingence pam50\_.\_claudin.low_subtype, on remarque que la modalité
+Basal est très lié au cluster 3 et LumA au cluster 2. Pour la dernière
+table de contingence X3.gene_classifier_subtype, la modalité ER-/HER2-
+est ptincipalement associée au cluster 3 et ER+/HER2- Low Prolif au
+cluster 2.
+
+## Prédiction de l’indice de Nottingham
+
+### Question 5
+
+5.  Mettre en place une prédiction de l’indice de Nottingham à l’aide
+    d’un modèle linéaire. Vous justifierez les choix faits.
+
+```{r}
+y <- genes.data$nottingham_prognostic_index 
+
+X <- genes.data[, c("cluster", colnames(genes.data)[31:130])] 
+X$cluster <- as.factor(X$cluster)
+
+set.seed(48) 
+train_index <- sample(1:nrow(X), 0.8 * nrow(X))  # 80% réservé pour l'entraînement
+
+X_train <- X[train_index, ]
+y_train <- y[train_index]
+X_test <- X[-train_index, ]
+y_test <- y[-train_index]
+
+# Application du modèle linéaire sur les données d'entraînements
+model <- lm(y_train ~ ., data = X_train)
+
+summary(model)
+
+y_pred <- predict(model, newdata = X_test)
+
+# Calculer le RMSE
+rmse <- sqrt(mean((y_test - y_pred)^2))
+cat("RMSE sur l'ensemble de test :", rmse, "\n")
+
+```
+
+Puisque l'indice de Nottingham est une variable continue, on utilise la
+régression linéaire. On inclu les clusters de Kmeans car ils regroupent
+les patientes selon des caractéristiques similaires ce qui peut
+permettre d'expliquer les variations de l'indice de Nottingham.
+
+Environ 25 % de la variance a été expliquée avec une erreur quadratique
+moyenne de 0.998. Les clusters de K-means et les gènes sélectionnés ont
+permis de repérer plusieurs variables importantes comme gsk3b, ncoa3,
+mmp12, et tp53bp1. Toutefois, on pourrait utiliser des modèles non
+linéaires par exemple Random Forest pour améliorer le modèle car il
+explique uniquement 1/4 de la variance totale de l'indice de Nottingham.
