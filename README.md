@@ -21,7 +21,7 @@ You can install them using the command: *install.packages("package_name")*.
 * **cluster** &rarr; clustering functions
 
 ## Repository Structure
-``
+``` bash
 .
 ├── breast_cancer_analysis.pdf      (The final rendered output document)
 ├── breast_cancer_analysis.Rmd      (The complete R Markdown source code)
@@ -29,7 +29,7 @@ You can install them using the command: *install.packages("package_name")*.
 │   └── METABRIC_RNA_Mutation.csv   (The raw gene expression and mutation data)
 ├── README.md
 └── sujet.pdf                       (The project subject in french)
-``
+``` 
 ## Summary of the Methodology
 1. **Feature Selection**: reducing the number of variables to 100 based on their correlation with the Nottingham score.
 2. **PCA**: running a normalized PCA on the 100 genes (the top 34 components are retained based on the 80.1% cumulative variance).
